@@ -51,6 +51,8 @@ void ComputeDistances(const int padded_num_dimension,
                       const int padded_num_reference,
                       const float* const d_padded_query,
                       const float* const d_padded_reference,
+                      const float* const d_padded_query2,
+                      const float* const d_padded_reference2,
                       long long* const d_candidate) {
   assert(padded_num_dimension % CHUNK_SIZE == 0);
   assert(padded_num_query % TILE_SIZE == 0);
@@ -63,7 +65,9 @@ void ComputeDistances(const int padded_num_dimension,
 
   kComputeDistances<<<grid, block>>>
       (padded_num_dimension, padded_num_query, padded_num_reference,
-       d_padded_query, d_padded_reference, d_candidate);
+       d_padded_query, d_padded_reference, 
+	   d_padded_query2,d_padded_reference2,
+	   d_candidate);
 
   SYNC_AND_CHECK_ERROR;
 
@@ -195,6 +199,7 @@ void BruteForceKnnSearch(const int num_dimension, const int num_query,
                          const int num_nearest_neighbor,
                          const float* const query, const float* const reference,
                          int* const knn_index, float* const knn_distance) {
+
   assert(num_dimension > 0);
   assert(num_query > 0);
   assert(num_reference > 0);
@@ -257,8 +262,48 @@ void BruteForceKnnSearch(const int num_dimension, const int num_query,
                  sizeof(float) * padded_num_dimension * padded_num_reference,
                  cudaMemcpyHostToDevice));
 
+  float* h_padded_query2 = new float[padded_num_query];
+  float* h_padded_reference2 = new float[padded_num_reference];
+  memset((void*)h_padded_query2, 0, sizeof(float) * padded_num_query);
+  memset((void*)h_padded_reference2, 0, sizeof(float) * padded_num_reference);
+
+  for (int i = 0; i < padded_num_query; ++i) {
+	for (int k = 0; k < num_dimension; ++k) {
+	  h_padded_query2[i] += h_padded_query[k * padded_num_query + i] * h_padded_query[k * padded_num_query + i];
+	}
+  }
+  for (int i = 0; i < padded_num_reference; ++i) {
+	for (int k = 0; k < num_dimension; ++k) {
+	  h_padded_reference2[i] += h_padded_reference[k * padded_num_reference + i] * h_padded_reference[k * padded_num_reference + i];
+	}
+  }
+
+
+  float* d_padded_query2 = NULL;
+  CHECK_ERROR(
+      cudaMalloc((void**)&d_padded_query2,
+                 sizeof(float) * padded_num_query));
+  float* d_padded_reference2 = NULL;
+  CHECK_ERROR(
+      cudaMalloc((void**)&d_padded_reference2,
+                 sizeof(float) * padded_num_reference));
+
+  CHECK_ERROR(
+      cudaMemcpy(d_padded_query2, h_padded_query2,
+                 sizeof(float) * padded_num_query,
+                 cudaMemcpyHostToDevice));
+  CHECK_ERROR(
+      cudaMemcpy(d_padded_reference2, h_padded_reference2,
+                 sizeof(float) * padded_num_reference,
+                 cudaMemcpyHostToDevice));
+
+
+
   ComputeDistances(padded_num_dimension, padded_num_query, padded_num_reference,
-                   d_padded_query, d_padded_reference, d_candidate);
+                   d_padded_query, d_padded_reference,
+                   d_padded_query2, d_padded_reference2,
+				   d_candidate);
+
 
   SortCandidateGroups(num_query, num_reference, padded_num_reference,
                       num_nearest_neighbor, d_candidate);

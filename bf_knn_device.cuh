@@ -47,7 +47,9 @@
 #define BLOCK_SIZE 16
 
 __global__ void kComputeDistances(const int K, const int M, const int N,
-                                  const float* A, const float* B, long long* C);
+                                  const float* A, const float* B,
+                                  const float* A2, const float* B2,
+								  long long* C);
 
 // Knn_NV >= nn
 #define K500_NT 64

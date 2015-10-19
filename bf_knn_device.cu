@@ -43,8 +43,10 @@
 
 #include "moderngpu.cuh"
 
+
 __global__ void kComputeDistances(const int K, const int M, const int N,
                                   const float* A, const float* B,
+                                  const float* A2,const float* B2,
                                   long long* C) {
   int tx = threadIdx.x;
   int ty = threadIdx.y;
@@ -57,12 +59,19 @@ __global__ void kComputeDistances(const int K, const int M, const int N,
   volatile __shared__ float as[16][96];
   volatile __shared__ float bs[16][96];
 
+  volatile __shared__ float a2s[96];
+  volatile __shared__ float b2s[96];
+
+
   float cr[6][6];
   float ar;
   float br[6];
 
   float asr[2][3];
   float bsr[2][3];
+
+  float a2r;
+  float b2r[6];
 
   A += ty2 * M + (by * 96 + tx2);
   B += ty2 * N + (bx * 96 + tx2);
@@ -73,6 +82,12 @@ __global__ void kComputeDistances(const int K, const int M, const int N,
   for (int i = 0; i < 6; ++i)
     #pragma unroll
     for (int j = 0; j < 6; ++j) cr[i][j] = 0.0f;
+
+  #pragma unroll
+  for (int i = tid; i < TILE_SIZE; i += blockDim.x * blockDim.y) {
+    a2s[i] = A2[by * TILE_SIZE + i];
+    b2s[i] = B2[bx * TILE_SIZE + i];
+  }
 
   // Load A gmem->smem
   #pragma unroll
@@ -121,8 +136,7 @@ __global__ void kComputeDistances(const int K, const int M, const int N,
         ar = as[k][i * 16 + ty];
         #pragma unroll
         for (int j = 0; j < 6; ++j) {
-          float d = ar - br[j];
-          cr[i][j] += d * d;
+          cr[i][j] += ar * br[j];
         }
       }
     }
@@ -156,9 +170,19 @@ __global__ void kComputeDistances(const int K, const int M, const int N,
       ar = as[k][i * 16 + ty];
       #pragma unroll
       for (int j = 0; j < 6; ++j) {
-        float d = ar - br[j];
-        cr[i][j] += d * d;
+        cr[i][j] += ar * br[j];
       }
+    }
+  }
+
+  for (int j = 0; j < 6; ++j) b2r[j] = b2s[j * 16 + tx];
+  // multiply -2
+  #pragma unroll
+  for (int i = 0; i < 6; ++i) {
+    a2r = a2s[i * 16 + ty];
+    #pragma unroll
+    for (int j = 0; j < 6; ++j) {
+      cr[i][j] = -2.0f * cr[i][j] + a2r + b2r[j];
     }
   }
 
@@ -188,6 +212,7 @@ __global__ void kSortCandidateGroups(const int nr, const int pnr,
   long long cr[VT];
   int ir[VT];
 
+  //VT elements: load from global memory to registers
   #pragma unroll
   for (int i = 0; i < VT; ++i) {
     int index = NT * i + tid;
